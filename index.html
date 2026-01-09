@@ -220,93 +220,120 @@
   </div>
 
   <script>
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzOxOrG9ro9SaYXbuAeBZZlDEKUYrRn6UUq9U00J0xSb1dnoK2CxwdNdbU2hN2GO09NPg/exec";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzGc-JTtbegNKx8PWMMcfDCiqDeHKHBOdQ-Jk4rMLyTaTLUTzCVZOqd4CrUly1WHKWeuA/exec";
 
-    const form = document.getElementById("registrationForm");
-    const submitBtn = document.getElementById("submitBtn");
-    const btnText = document.getElementById("btnText");
-    const btnLoader = document.getElementById("btnLoader");
-    const messageBox = document.getElementById("messageBox");
+  const form = document.getElementById("registrationForm");
+  const submitBtn = document.getElementById("submitBtn");
+  const btnText = document.getElementById("btnText");
+  const btnLoader = document.getElementById("btnLoader");
+  const messageBox = document.getElementById("messageBox");
 
-    // Default dates to today
-    (function setTodayDefaults() {
-      const t = new Date();
-      const iso = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
-      const doj = document.getElementById("dateOfJoining");
-      const sig = document.getElementById("signatureDate");
-      if (doj && !doj.value) doj.value = iso;
-      if (sig && !sig.value) sig.value = iso;
-    })();
+  // Default dates to today
+  function setTodayDefaults() {
+    const t = new Date();
+    const iso = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
+    const doj = document.getElementById("dateOfJoining");
+    const sig = document.getElementById("signatureDate");
+    if (doj) doj.value = iso;
+    if (sig) sig.value = iso;
+  }
+  setTodayDefaults();
 
-    // Hidden iframe for submission (no CORS)
-    const iframe = document.createElement("iframe");
-    iframe.name = "hidden_iframe";
-    iframe.style.display = "none";
-    document.body.appendChild(iframe);
+  // Hidden iframe for submission (no CORS)
+  const iframe = document.createElement("iframe");
+  iframe.name = "hidden_iframe";
+  iframe.style.display = "none";
+  document.body.appendChild(iframe);
 
-    let inFlight = false;
+  let inFlight = false;
+  let timeoutId = null;
+  let gotMessage = false;
 
-    // Receive status from Apps Script (postMessage)
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.source === "btl_apps_script") {
-        inFlight = false;
-        submitBtn.disabled = false;
-        btnText.textContent = "Submit Registration";
-        btnLoader.classList.add("hidden");
+  function startUI() {
+    submitBtn.disabled = true;
+    btnText.textContent = "Processing...";
+    btnLoader.classList.remove("hidden");
+    messageBox.classList.add("hidden");
+  }
 
-        if (event.data.ok) {
-          showMessage(event.data.message || "Submitted successfully.", "success");
-          form.reset();
-          // re-set dates after reset
-          const t = new Date();
-          const iso = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
-          document.getElementById("dateOfJoining").value = iso;
-          document.getElementById("signatureDate").value = iso;
-        } else {
-          showMessage(event.data.message || "Submission failed.", "error");
-        }
-      }
-    });
+  function endUI() {
+    inFlight = false;
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = null;
 
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
+    submitBtn.disabled = false;
+    btnText.textContent = "Submit Registration";
+    btnLoader.classList.add("hidden");
+  }
 
-      if (!SCRIPT_URL || !SCRIPT_URL.startsWith("https://script.google.com/macros/s/") || !SCRIPT_URL.endsWith("/exec")) {
-        showMessage("Invalid backend URL configured.", "error");
-        return;
-      }
+  // Receive status from Apps Script (postMessage)
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.source !== "btl_apps_script") return;
 
-      if (inFlight) return; // hard stop double submits
+    gotMessage = true;
+    endUI();
 
-      inFlight = true;
-      submitBtn.disabled = true;
-      btnText.textContent = "Processing...";
-      btnLoader.classList.remove("hidden");
-      messageBox.classList.add("hidden");
-
-      form.action = SCRIPT_URL;
-      form.method = "POST";
-      form.target = "hidden_iframe";
-      form.submit();
-
-      // timeout guard
-      setTimeout(() => {
-        if (!inFlight) return;
-        inFlight = false;
-        submitBtn.disabled = false;
-        btnText.textContent = "Submit Registration";
-        btnLoader.classList.add("hidden");
-        showMessage("No response from server. Check your internet or Apps Script Executions.", "error");
-      }, 15000);
-    });
-
-    function showMessage(text, type) {
-      messageBox.textContent = text;
-      messageBox.classList.remove("hidden", "bg-green-100", "text-green-800", "bg-red-100", "text-red-800");
-      if (type === "success") messageBox.classList.add("bg-green-100", "text-green-800");
-      else messageBox.classList.add("bg-red-100", "text-red-800");
-      messageBox.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (event.data.ok) {
+      showMessage(event.data.message || "Submitted successfully.", "success");
+      form.reset();
+      setTodayDefaults();
+    } else {
+      showMessage(event.data.message || "Submission failed.", "error");
     }
-  </script>
+  });
+
+  // If iframe loads, server responded. If postMessage didn't arrive, show targeted error.
+  iframe.addEventListener("load", () => {
+    if (!inFlight) return;
+
+    // Wait briefly for postMessage
+    setTimeout(() => {
+      if (!inFlight) return; // already ended via postMessage
+      endUI();
+
+      if (!gotMessage) {
+        showMessage(
+          "Server responded but did not return a confirmation message. Check Apps Script → Executions to see the result.",
+          "error"
+        );
+      }
+    }, 600);
+  });
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    if (!SCRIPT_URL || !SCRIPT_URL.startsWith("https://script.google.com/macros/s/") || !SCRIPT_URL.endsWith("/exec")) {
+      showMessage("Invalid backend URL configured.", "error");
+      return;
+    }
+
+    if (inFlight) return;
+
+    inFlight = true;
+    gotMessage = false;
+    startUI();
+
+    form.action = SCRIPT_URL;
+    form.method = "POST";
+    form.target = "hidden_iframe";
+    form.submit();
+
+    timeoutId = setTimeout(() => {
+      if (!inFlight) return;
+      endUI();
+      showMessage("No response within 30 seconds. Check Apps Script → Executions.", "error");
+    }, 30000);
+  });
+
+  function showMessage(text, type) {
+    messageBox.textContent = text;
+    messageBox.classList.remove("hidden", "bg-green-100", "text-green-800", "bg-red-100", "text-red-800");
+    if (type === "success") messageBox.classList.add("bg-green-100", "text-green-800");
+    else messageBox.classList.add("bg-red-100", "text-red-800");
+    messageBox.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+</script>
+
 </body>
 </html>
